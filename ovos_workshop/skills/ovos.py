@@ -12,7 +12,7 @@ from inspect import signature
 from itertools import chain
 from os.path import join, abspath, dirname, basename, isfile
 from threading import Event, RLock
-from typing import Dict, Callable, List, Optional, Union
+from typing import Dict, Callable, List, Optional, Union, Tuple
 
 from json_database import JsonStorage
 from lingua_franca.format import pronounce_number, join_list
@@ -78,6 +78,24 @@ def simple_trace(stack_trace: List[str]) -> str:
         if line.strip():
             tb += line
     return tb
+
+class OEntity:
+    def __init__(self, name, skill, entity_values=None):
+        self.skill = skill  # Used for name mangling
+        self.name = name
+        self.entity_values = entity_values if entity_values else dict()
+
+    def add_values(self, lang, values):
+        '''Add values for a given lang'''
+        if lang not in self.entity_values:
+            self.entity_values[lang] = list(values)
+        else:
+            self.entity_values[lang].extend(values)
+
+    def for_registration(self):
+        '''Return a structure useful for registration'''
+        return (self.name, self.entity_values)
+
 
 
 class _OVOSSkillMetaclass(ABCMeta):
@@ -1231,9 +1249,12 @@ class OVOSSkill(metaclass=_OVOSSkillMetaclass):
             handler (func): function to register with intent
         """
         if isinstance(intent_parser, str):
-            if not intent_parser.endswith('.intent'):
+            if intent_parser.endswith('.intent'):
+                return self.register_intent_file(intent_parser, handler)
+            elif intent_parser.endswith('.entity'):
+                return self.register_entity_file(intent_parser)
+            else:
                 raise ValueError
-            return self.register_intent_file(intent_parser, handler)
         return self._register_adapt_intent(intent_parser, handler)
 
     def register_intent_file(self, intent_file: str, handler: callable):
@@ -1273,6 +1294,57 @@ class OVOSSkill(metaclass=_OVOSSkillMetaclass):
         if handler:
             self.add_event(name, handler, 'mycroft.skill.handler')
 
+    def register_entity(self, entity: Union[List[Tuple[str, List[str]]], str]):
+        """
+        Register Entity with the intent service.
+
+        Args:
+            entity: list of (entity, {lang: values}) tuples
+                    file named <entity>.entity of values
+
+        eg s.register_entity(("room": { "en-us": ("hall", "kitchen")}))
+        """
+        if isinstance(entity, str):
+            if entity.endswith('.intent'):
+                return self.register_entity_file(entity)
+            elif intent_parser.endswith('.entity'):
+                return self.register_entity_file(intent_parser)
+            else:
+                raise ValueError
+        # lang
+        # msg = {"name":
+        return self._register_adapt_intent(intent_parser, handler)
+
+    def entity_from_file(self, entity_file: str):
+        """
+        Create an Entity from a file.
+
+        An Entity file lists the exact values that an entity can hold.
+        For example:
+            ask.day.intent:
+                Is it {weekend}?
+            weekend.entity:
+                Saturday
+                Sunday
+
+        Args:
+            entity_file (string): name of file that contains examples of an
+                                  entity.
+        """
+        if entity_file.endswith('.entity'):
+            entity_file = entity_file.replace('.entity', '')
+        e = OEntity(entity_file, skill=self)
+        for lang in self.native_langs:
+            resources = self.load_lang(self.res_dir, lang)
+            entity = ResourceFile(resources.types.entity, entity_file)
+            if entity.file_path is None:
+                self.log.error(f'Unable to find "{entity_file}"')
+                continue
+            filename = str(entity.file_path)
+            name = f"{self.skill_id}:{basename(entity_file)}_" \
+                   f"{md5(entity_file.encode('utf-8')).hexdigest()}"
+            self.intent_service.register_padatious_entity(name, filename, lang)
+
     def register_entity_file(self, entity_file: str):
         """
         Register an Entity file with the intent service.
@@ -1300,6 +1372,7 @@ class OVOSSkill(metaclass=_OVOSSkillMetaclass):
             filename = str(entity.file_path)
             name = f"{self.skill_id}:{basename(entity_file)}_" \
                    f"{md5(entity_file.encode('utf-8')).hexdigest()}"
+            self.log.debug(f'Registering entity "{name}"')
             self.intent_service.register_padatious_entity(name, filename, lang)
 
     def register_vocabulary(self, entity: str, entity_type: str,

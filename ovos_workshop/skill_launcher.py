@@ -377,6 +377,8 @@ class SkillLoader:
             self._watchdog = FileWatcher([self.skill_directory],
                                          callback=self._handle_filechange,
                                          recursive=True)
+            LOG.info(f'Watchdog for {self.skill_directory} created')
+
 
     def _handle_filechange(self, path: str):
         """
